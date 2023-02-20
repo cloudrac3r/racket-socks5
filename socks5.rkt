@@ -10,9 +10,14 @@
 @title[#:style manual-doc-style]{SOCKS5 TCP Client in Racket}
 @author[(author+email "Cadence Ember" "cadence@disroot.org" #:obfuscate? #t)]
 
-@local-table-of-contents[]
+To use this library, see @Secref["Provides"].
 
-@section{Provides}
+To see the source code document, see @Secref["Source"].
+
+@(define cleartext-margin-note
+   (margin-note "As a limitation of the SOCKS5 protocol, the username and password will be transmitted through the network in cleartext."))
+
+@section[#:tag "Provides"]{Provides}
 
 @defmodule[socks5]
 
@@ -22,25 +27,46 @@
                          [dest-port positive-integer?]
                          [#:username-password username-password (cons/c bytes? bytes?) #f])
          (values input-port? output-port?)]{
+Establishes a TCP connection to @racket[dest-host]:@racket[dest-port] via the SOCKS5 server @racket[socks-host]:@racket[socks-port]. If the connection was successful, @racket[socks5-connect] returns a pair of ports like @racket[tcp-connect], where the output port sends data and the input port receives data. Data transmission works exactly as though the ports were directly connected to the destination, but all data actually goes via the SOCKS5 server.
+
 @racket[socks-host] is the IP or hostname of the SOCKS5 server to connect to.
 
 @racket[dest-host] is the IP or hostname of the destination server to connect to via the proxy. If it is a hostname, it will be resolved to an IP address by the proxy server. If this behaviour is undesirable, you can locally resolve the IP and pass it instead of the hostname.
 
-@racket[#:username-password] (optional) is a pair of a username and password to try, as bytes. Not all SOCKS5 servers require authentication. Note that as a limitation of the SOCKS5 protocol, the username and password will be transmitted through the network in cleartext.
+@cleartext-margin-note
+@racket[#:username-password] (optional) is a pair of a username and password to try, as bytes. Not all SOCKS5 servers require authentication.
 }
 
 @subsubsub*section{Example usage}
 
-@racketblock[
-;; establish connection to example.com:80 via the proxy 127.0.0.1:1080
-(define-values (in out) (socks5-connect "127.0.0.1" 1080 "example.com" 80))
-;; send HTTP request and say that the connection should be closed
-(displayln "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n" out)
-;; send TCP FIN
-(close-output-port out)
-;; print the server's response
-(copy-port in (current-output-port))
-]
+@#reader scribble/comment-reader
+(racketblock
+ ;; establish connection to example.com:80 via the proxy 127.0.0.1:1080
+ (define-values (in out)
+   (socks5-connect "127.0.0.1" 1080 "example.com" 80))
+ ;; send HTTP request
+ (displayln
+  (string-append
+   "GET / HTTP/1.1\r\n"
+   "Host: example.com\r\n"
+   "Connection: close\r\n\r\n")
+  out)
+ ;; send TCP FIN
+ (close-output-port out)
+ ;; print the server's response
+ (copy-port in (current-output-port)))
+
+@subsubsub*section{Closing ports}
+
+Closing ports generally works in a reasonable way.
+
+Just like the ports from @racket[tcp-connect], closing the output port means no more data will be sent, and triggers a TCP FIN notice. The SOCKS5 server forwards TCP FIN to the destination.
+
+The destination server can also close its side of the connection at any time by sending TCP FIN, which closes the input port here (trying to read will return @racket[eof]). After both sides have sent TCP FIN, the connection is considered fully closed.
+
+When used with the HTTP protocol, if the request headers have @code{Connection: close}, then the server will close its side of the connection immediately after finishing its response. In order to fully close the connection, simply close the output port. (I suggest doing this immediately after sending the HTTP request.)
+
+If the request headers have @code{Connection: keep-alive}, multiple HTTP requests can be sent through the same TCP connection. The server won't automatically close its side of the connection (unless it gets bored through inactivity). This situation is also simple to deal with: closing the output port will show the server that the requests are over, and it will close its side of the connection too.
 
 @subsubsub*section{Typed Racket definition}
 
@@ -62,7 +88,8 @@ This is intended to only be used with @seclink["Proxies" #:doc '(lib "net/http-e
 
 @racket[matches?] is a function that takes a URL and returns whether it should be handled by this proxy.
 
-@racket[#:username-password] (optional) is a pair of a username and password to try, as bytes. Not all SOCKS5 servers require authentication. Note that as a limitation of the SOCKS5 protocol, the username and password will be transmitted through the network in cleartext.
+@cleartext-margin-note
+@racket[#:username-password] (optional) is a pair of a username and password to try, as bytes. Not all SOCKS5 servers require authentication.
 
 @subsubsub*section[#:tag "make-socks5-proxy-example"]{Example usage}
 
@@ -83,7 +110,7 @@ This is intended to only be used with @seclink["Proxies" #:doc '(lib "net/http-e
        (define (make-socks5-proxy socks-host socks-port [matches? (λ (_) #t)] #:username-password [username-password #f])
          <make-socks5-proxy-body>)]
 
-@section[#:style '(toc)]{Source}
+@section[#:tag "Source" #:style '(toc)]{Source}
 
 This is the full source code of the socks5 library. It is written in a literate programming style, where documentation and code live side by side, using the @other-doc['(lib "hyper-literate/scribblings/hyper-literate.scrbl")] language.
 
@@ -216,8 +243,7 @@ Username/Password request:
 }
 }
 
-The protocol says the username and password are transmitted in cleartext, which is a little surprising. At least it's easy for me to implement! Just be sure not to use that password for anything else...
-
+@cleartext-margin-note
 @chunk[<method-username-password>
        (send (bytes 1))
        (send (bytes (bytes-length username)))
@@ -486,8 +512,7 @@ Racket's @racket[read-bytes] may return fewer bytes than requested if end-of-fil
 
 This program depends on the following libraries:
 
-@bold{net/ip (installable as net-ip-lib)}
-
+@subsubsub*section{net/ip (installable as net-ip-lib)}
 @chunk[<require>
        (require/typed net/ip
          [#:opaque IP-Address ip-address?]
@@ -495,20 +520,20 @@ This program depends on the following libraries:
          [ip-address->bytes (IP-Address -> Bytes)]
          [ip-address-version (IP-Address -> (U 4 6))])]
 
-@bold{net/http-easy (installable as http-easy-lib)}
+@subsubsub*section{net/http-easy (installable as http-easy-lib)}
 @chunk[<require>
        (require/typed net/http-easy
          [#:opaque Proxy proxy?]
          [make-proxy (Proxy-Matches? Proxy-Connect! -> Proxy)])]
 
-@bold{typed/net/url, typed/net/http-client typed/openssl (installable as typed-racket-more)}
-@code{begin} is necessary to @hyperlink["https://docs.racket-lang.org/test.hl/index.html#%28part._.Avoiding_for-label%29" "avoid identifiers being loaded twice"].
+@subsubsub*section{typed/net/url, typed/net/http-client, typed/openssl (installable as typed-racket-more)}
+@margin-note{@code{begin} is necessary to @hyperlink["https://docs.racket-lang.org/test.hl/index.html#%28part._.Avoiding_for-label%29" "avoid identifiers being loaded twice"].}
 @chunk[<require>
        (begin (require typed/net/url typed/net/http-client typed/openssl))
        (define-type Proxy-Matches? (URL -> Boolean))
        (define-type Proxy-Connect! (HTTP-Connection URL SSL-Client-Context -> Void))]
 
-@bold{racket/tcp (included in base)}
+@subsubsub*section{racket/tcp (included in base)}
 @chunk[<require>
        (require racket/tcp)]
 
@@ -522,28 +547,12 @@ Assembling the pieces.
        <send>
        <provide>]
 
-@chunk[<test>
-       (module* test racket
-         (require (submod ".."))
-         (require net/http-easy openssl)
-         (parameterize ([print-txrx? #t])
-           (define p (make-socks5-proxy "127.0.0.1" 1080))
-           (define s (make-session #:proxies (list p) #:ssl-context (ssl-make-client-context) #:pool-config (make-pool-config #:max-size 1 #:idle-timeout 5)))
-           (define r (session-request s "http://127.0.0.1:8008"))
-           (println (bytes-length (response-body r)))
-           (define r2 (session-request s "https://example.com"))
-           (println (bytes-length (response-body r2)))
-           #;(begin
-               (define-values (in out) (socks5-connect "127.0.0.1" 1080 "example.com" 8008))
-               (displayln "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n" out)
-               (close-output-port out)
-               (copy-port in (current-output-port)))))]
-
 @section{Other Resources}
 
 @itemlist[
 @item{@hyperlink["https://datatracker.ietf.org/doc/html/rfc1928/" "RFC 1928, SOCKS Protocol Version 5"]}
 @item{@hyperlink["https://datatracker.ietf.org/doc/html/rfc1929/" "RFC 1929, Username/Password Authentication for SOCKS V5"]}
+@item{@hyperlink["https://samsclass.info/122/proj/how-socks5-works.html" "How Socks 5 Works [fantastic webpage that matches the protocol with Wireshark logs]"]}
 @item{@hyperlink["https://en.wikipedia.org/wiki/SOCKS" "Wikipedia: SOCKS"]}
 @item{@hyperlink["https://wiki.archlinux.org/title/Proxy_server#Web_proxy_options" "Arch Wiki: Proxy Server"]}
 @item{@hyperlink["https://blog.zhaytam.com/2019/11/15/socks5-a-net-core-implementation-from-scratch/" "Socks5 – A .NET Core implementation from scratch"]}
